@@ -45,3 +45,44 @@ dialog select,dialog textarea{width:100%;padding:8px;border:1px solid #aaa;borde
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .toast{position:fixed;right:16px;bottom:48px;z-index:50;background:#202020;color:white;border-radius:5px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.28);font-size:13px}
 @media (max-width:800px){.toolbar-wrap{max-height:180px;overflow:auto}.scroll-area{padding:20px}.readout{min-width:86px}}
+
+/* Cross-device / touch improvements */
+html{-webkit-text-size-adjust:100%}
+button,input,select,textarea{-webkit-tap-highlight-color:transparent}
+button{min-height:34px;touch-action:manipulation}
+#overlayCanvas{touch-action:none;-webkit-user-select:none;user-select:none}
+.scroll-area{-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges}
+.toolbar-wrap{padding-top:max(5px,env(safe-area-inset-top));padding-left:max(5px,env(safe-area-inset-left));padding-right:max(5px,env(safe-area-inset-right))}
+.statusbar{padding-bottom:env(safe-area-inset-bottom)}
+
+@media (pointer:coarse){
+  button{min-height:42px;padding:8px 12px}
+  .toolbar-row{gap:6px;min-height:46px}
+  .readout{height:38px;font-size:14px}
+  .settings-row input[type=number]{width:62px;min-height:38px;font-size:16px}
+  .color-control input{width:42px;height:38px}
+  dialog select,dialog textarea{font-size:16px}
+}
+
+@media (max-width:800px){
+  .app{grid-template-rows:auto minmax(0,1fr) auto}
+  .toolbar-wrap{max-height:none;overflow:hidden;padding-bottom:4px}
+  .toolbar-row{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;white-space:nowrap;padding-bottom:3px;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+  .toolbar-row>*{flex:0 0 auto}
+  .toolbar-row .sep{display:none}
+  .settings-row label,.color-control{min-height:42px}
+  .scroll-area{padding:16px}
+  .statusbar{height:38px;font-size:12px}
+  dialog{width:min(92vw,420px);min-width:0;max-width:92vw}
+  .empty-state{padding:20px}
+  .empty-state h1{font-size:24px}
+}
+
+@media (max-width:480px){
+  .toolbar-wrap{padding-left:max(3px,env(safe-area-inset-left));padding-right:max(3px,env(safe-area-inset-right))}
+  .toolbar-row{gap:4px}
+  button{padding:7px 10px}
+  .readout{min-width:82px}
+  .scroll-area{padding:10px}
+  .statusbar #selectionStatus{display:none}
+}

@@ -23,7 +23,8 @@ const imageCache = new Map();
 const state = {
   sourceBytes:null, pdfjsDoc:null, filename:'new_pdf.pdf', pages:[], pageIndex:0, zoom:1, minZoom:.1, maxZoom:4,
   tool:'select', color:'#ff0000', drawing:false, currentStroke:null, pointerId:null, selected:[], clipboard:[],
-  drag:null, selectionRect:null, undo:[], redo:[], pendingTextPoint:null, editTextIndex:null, renderToken:0
+  drag:null, selectionRect:null, undo:[], redo:[], pendingTextPoint:null, editTextIndex:null, renderToken:0,
+  activePointers:new Map(), gesture:null, panStart:null
 };
 
 function page(){ return state.pages[state.pageIndex] || null; }
@@ -48,7 +49,7 @@ function setTool(tool){
   state.tool=tool; state.selected=[]; state.drag=null; state.selectionRect=null;
   document.querySelectorAll('.tool[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));
   els.toolLabel.textContent=`Tool: ${tool[0].toUpperCase()+tool.slice(1)}`;
-  els.overlayCanvas.style.cursor=tool==='select'?'default':tool==='text'?'text':'crosshair';
+  els.overlayCanvas.style.cursor=tool==='select'?'default':tool==='pan'?'grab':tool==='text'?'text':'crosshair';
   drawOverlay(); updateUI();
 }
 
@@ -145,9 +146,50 @@ function scaleAnn(ann,group,sx,sy){ const [x0,y0]=group; if(ann.type==='stroke'|
 function rotatePoint(x,y,cx,cy,deg){ const r=deg*Math.PI/180,ca=Math.cos(r),sa=Math.sin(r),dx=x-cx,dy=y-cy; return {x:cx+dx*ca-dy*sa,y:cy+dx*sa+dy*ca}; }
 function rotateAnn(ann,group,deg){ const cx=(group[0]+group[2])/2,cy=(group[1]+group[3])/2; if(ann.type==='stroke'||ann.type==='highlight')ann.points=ann.points.map(p=>rotatePoint(p.x,p.y,cx,cy,deg)); else {const q=rotatePoint(ann.x,ann.y,cx,cy,deg);ann.x=q.x;ann.y=q.y;ann.rotation=((ann.rotation||0)+deg)%360;} }
 
+function openDialog(el){
+  if(typeof el.showModal==='function'){ el.showModal(); return; }
+  el.setAttribute('open','');
+}
+function closeDialog(el){
+  if(typeof el.close==='function') el.close(); else el.removeAttribute('open');
+}
+function pointerMidpoint(){
+  const pts=[...state.activePointers.values()];
+  if(pts.length<2)return null;
+  return {x:(pts[0].clientX+pts[1].clientX)/2,y:(pts[0].clientY+pts[1].clientY)/2};
+}
+function pointerDistance(){
+  const pts=[...state.activePointers.values()];
+  if(pts.length<2)return 0;
+  return Math.hypot(pts[1].clientX-pts[0].clientX,pts[1].clientY-pts[0].clientY);
+}
+function beginGesture(){
+  if(state.currentStroke){state.currentStroke=null;state.drawing=false;}
+  state.drag=null;state.selectionRect=null;state.pointerId=null;
+  const mid=pointerMidpoint();
+  state.gesture={startDistance:Math.max(1,pointerDistance()),startZoom:state.zoom,startMid:mid,startLeft:els.scrollArea.scrollLeft,startTop:els.scrollArea.scrollTop};
+  drawOverlay();
+}
+function updateGesture(){
+  if(!state.gesture||state.activePointers.size<2)return;
+  const mid=pointerMidpoint(),dist=Math.max(1,pointerDistance()),g=state.gesture;
+  const target=clamp(g.startZoom*(dist/g.startDistance),state.minZoom,state.maxZoom);
+  const contentX=(g.startLeft+g.startMid.x-els.scrollArea.getBoundingClientRect().left)/g.startZoom;
+  const contentY=(g.startTop+g.startMid.y-els.scrollArea.getBoundingClientRect().top)/g.startZoom;
+  state.zoom=target;
+  renderPage().then(()=>{
+    els.scrollArea.scrollLeft=Math.max(0,contentX*target-(mid.x-els.scrollArea.getBoundingClientRect().left));
+    els.scrollArea.scrollTop=Math.max(0,contentY*target-(mid.y-els.scrollArea.getBoundingClientRect().top));
+  });
+}
+
 els.overlayCanvas.addEventListener('pointerdown',(evt)=>{
-  if(!page())return; els.overlayCanvas.setPointerCapture(evt.pointerId); state.pointerId=evt.pointerId; const pt=toPagePoint(evt);
-  if(state.tool==='text'){ state.pendingTextPoint=pt; state.editTextIndex=null; els.textInput.value=''; els.textDialog.showModal(); setTimeout(()=>els.textInput.focus(),20); return; }
+  if(!page())return; evt.preventDefault(); state.activePointers.set(evt.pointerId,{clientX:evt.clientX,clientY:evt.clientY,pointerType:evt.pointerType});
+  try{els.overlayCanvas.setPointerCapture(evt.pointerId);}catch{}
+  if(state.activePointers.size>=2){ beginGesture(); return; }
+  state.pointerId=evt.pointerId; const pt=toPagePoint(evt);
+  if(state.tool==='pan'){ state.panStart={x:evt.clientX,y:evt.clientY,left:els.scrollArea.scrollLeft,top:els.scrollArea.scrollTop}; els.overlayCanvas.style.cursor='grabbing'; return; }
+  if(state.tool==='text'){ state.pendingTextPoint=pt; state.editTextIndex=null; els.textInput.value=''; openDialog(els.textDialog); setTimeout(()=>els.textInput.focus(),20); return; }
   if(state.tool==='pen'||state.tool==='highlight'){
     state.drawing=true; state.currentStroke={type:state.tool==='pen'?'stroke':'highlight',points:[pt],color:state.tool==='highlight'?'#ffff00':els.colorPicker.value,width:state.tool==='highlight'?num(els.highlightWidth,16,1,80):num(els.penWidth,3,1,80)}; drawOverlay(); return;
   }
@@ -164,6 +206,9 @@ els.overlayCanvas.addEventListener('pointerdown',(evt)=>{
 });
 
 els.overlayCanvas.addEventListener('pointermove',(evt)=>{
+  if(state.activePointers.has(evt.pointerId)) state.activePointers.set(evt.pointerId,{clientX:evt.clientX,clientY:evt.clientY,pointerType:evt.pointerType});
+  if(state.gesture){evt.preventDefault();updateGesture();return;}
+  if(state.tool==='pan'&&state.pointerId===evt.pointerId&&state.panStart){evt.preventDefault();els.scrollArea.scrollLeft=state.panStart.left-(evt.clientX-state.panStart.x);els.scrollArea.scrollTop=state.panStart.top-(evt.clientY-state.panStart.y);return;}
   if(state.pointerId!==evt.pointerId)return; const pt=toPagePoint(evt);
   if(state.drawing&&state.currentStroke){ state.currentStroke.points.push(pt); drawOverlay(); return; }
   if(!state.drag)return;
@@ -177,6 +222,9 @@ els.overlayCanvas.addEventListener('pointermove',(evt)=>{
 });
 
 function endPointer(evt){
+  state.activePointers.delete(evt.pointerId);
+  if(state.gesture){ if(state.activePointers.size<2)state.gesture=null; if(state.activePointers.size===0){state.pointerId=null;state.panStart=null;} return; }
+  if(state.tool==='pan'&&state.pointerId===evt.pointerId){state.pointerId=null;state.panStart=null;els.overlayCanvas.style.cursor='grab';return;}
   if(state.pointerId!==evt.pointerId)return;
   if(state.drawing&&state.currentStroke){ if(state.currentStroke.points.length>1){ pushHistory(); page().annotations.push(state.currentStroke); } state.currentStroke=null; state.drawing=false; }
   if(state.drag?.mode==='box'){ state.selectionRect=null; }
@@ -187,15 +235,15 @@ els.overlayCanvas.addEventListener('pointerup',endPointer); els.overlayCanvas.ad
 function eraseAt(pt){ const r=num(els.eraserWidth,20,1,200)/2; const before=page().annotations.length; page().annotations=page().annotations.filter(a=>{const b=bbox(a); if(!b)return true; const nx=clamp(pt.x,b[0],b[2]),ny=clamp(pt.y,b[1],b[3]); return Math.hypot(pt.x-nx,pt.y-ny)>r;}); if(page().annotations.length!==before){state.selected=[];drawOverlay();updateUI();} }
 
 els.overlayCanvas.addEventListener('dblclick',(evt)=>{
-  if(state.tool!=='select')return; const i=hitTest(toPagePoint(evt)); if(i===null)return; const a=page().annotations[i]; if(a.type!=='text')return; state.editTextIndex=i; state.pendingTextPoint={x:a.x,y:a.y}; els.textInput.value=a.text; els.textDialog.showModal();
+  if(state.tool!=='select')return; const i=hitTest(toPagePoint(evt)); if(i===null)return; const a=page().annotations[i]; if(a.type!=='text')return; state.editTextIndex=i; state.pendingTextPoint={x:a.x,y:a.y}; els.textInput.value=a.text; openDialog(els.textDialog);
 });
 
 els.confirmTextBtn.addEventListener('click',(evt)=>{
-  evt.preventDefault(); const text=els.textInput.value; if(!text.trim()){els.textDialog.close();return;}
+  evt.preventDefault(); const text=els.textInput.value; if(!text.trim()){closeDialog(els.textDialog);return;}
   pushHistory();
   if(state.editTextIndex!==null){ page().annotations[state.editTextIndex].text=text; }
   else page().annotations.push({type:'text',x:state.pendingTextPoint.x,y:state.pendingTextPoint.y,text,color:els.colorPicker.value,size:num(els.textSize,18,6,144),rotation:0});
-  state.editTextIndex=null; state.pendingTextPoint=null; els.textDialog.close(); drawOverlay();updateUI();
+  state.editTextIndex=null; state.pendingTextPoint=null; closeDialog(els.textDialog); drawOverlay();updateUI();
 });
 
 els.imageBtn.addEventListener('click',()=>els.imageInput.click());
@@ -240,10 +288,49 @@ async function saveAs(){
         }
       }
     }
-    const bytes=await out.save(); const blob=new Blob([bytes],{type:'application/pdf'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=(state.filename.replace(/\.pdf$/i,'')||'document')+'-edited.pdf'; document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);updateStatus('Saved PDF download.');
+    const bytes=await out.save();
+    const blob=new Blob([bytes],{type:'application/pdf'});
+    const filename=(state.filename.replace(/\.pdf$/i,'')||'document')+'-edited.pdf';
+    await downloadPdfBlob(blob,filename);
+    updateStatus('Saved PDF download.');
   }catch(e){console.error(e);toast('Save failed.');}
   finally{els.saveBtn.textContent='Save As';els.saveBtn.disabled=false;}
 }
+async function downloadPdfBlob(blob,filename){
+  // Desktop browsers honor the download attribute. iOS/iPadOS Safari may
+  // instead preview Blob URLs, so use the Web Share API when file sharing is
+  // available and fall back to opening the PDF in a new tab if needed.
+  const file=new File([blob],filename,{type:'application/pdf'});
+  const isAppleMobile=/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  if(isAppleMobile && navigator.share && navigator.canShare){
+    try{
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:filename});
+        return;
+      }
+    }catch(err){
+      if(err?.name!=='AbortError') console.warn('Share fallback:',err);
+      else return;
+    }
+  }
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=filename;
+  a.rel='noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if(isAppleMobile){
+    setTimeout(()=>{
+      try{ window.open(url,'_blank','noopener'); }catch{}
+    },50);
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+  }else{
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+  }
+}
+
 function dataUrlToBytes(url){ const b64=url.split(',')[1],bin=atob(b64),u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8; }
 
 function updateUI(){
@@ -255,8 +342,8 @@ function updateUI(){
 }
 function updateStatus(msg){ els.status.textContent=msg||'Ready.'; updateUI(); }
 
-els.newBtn.onclick=()=>els.newDialog.showModal(); els.emptyNewBtn.onclick=()=>els.newDialog.showModal();
-els.createPdfBtn.addEventListener('click',(e)=>{e.preventDefault();els.newDialog.close();createNewPdf();});
+els.newBtn.onclick=()=>openDialog(els.newDialog); els.emptyNewBtn.onclick=()=>openDialog(els.newDialog);
+els.createPdfBtn.addEventListener('click',(e)=>{e.preventDefault();closeDialog(els.newDialog);createNewPdf();});
 els.importBtn.onclick=()=>els.pdfInput.click();els.emptyImportBtn.onclick=()=>els.pdfInput.click();els.pdfInput.onchange=()=>{openPdfFile(els.pdfInput.files?.[0]);els.pdfInput.value='';};
 els.saveBtn.onclick=saveAs; els.addPageBtn.onclick=addBlankPage;els.delPageBtn.onclick=deletePage;els.prevBtn.onclick=prevPage;els.nextBtn.onclick=nextPage;
 els.undoBtn.onclick=undo;els.redoBtn.onclick=redo;els.deleteSelectedBtn.onclick=deleteSelected;els.clearPageBtn.onclick=clearPage;
@@ -275,6 +362,15 @@ window.addEventListener('keydown',async(e)=>{
     e.preventDefault();pushHistory();for(const i of state.selected){const a=page().annotations[i];if(k==='r')rotateAnn(a,b,2.5);else if(k==='1')scaleAnn(a,b,1.025,1);else if(k==='3')scaleAnn(a,b,.975,1);else if(k==='2')scaleAnn(a,b,1,1.025);else if(k==='4')scaleAnn(a,b,1,.975);}drawOverlay();updateUI();
   }
 });
+
+els.scrollArea.addEventListener('wheel',(e)=>{
+  if(!page()||!e.ctrlKey)return;
+  e.preventDefault();
+  zoomTo(state.zoom*(e.deltaY<0?1.1:1/1.1));
+},{passive:false});
+
+// Prevent long-press context menus from interrupting pen/touch editing.
+els.overlayCanvas.addEventListener('contextmenu',e=>e.preventDefault());
 
 window.addEventListener('resize',()=>{ if(page())drawOverlay(); });
 updateUI();

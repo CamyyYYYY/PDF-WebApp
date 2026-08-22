@@ -1,6 +1,6 @@
 # Simple PDF Editor (JavaScript / GitHub Pages)
 
-A browser-only PDF editor inspired by my supplied desktop Simple PDF Python Source Code based Editor. It uses **HTML, CSS, and JavaScript only** — no Python and no backend.
+A browser-only PDF editor inspired by my supplied desktop **Simple PDF Python Source Code based Editor**. It uses **HTML, CSS, and JavaScript only** — no Python and no backend.
 
 ## Features
 
@@ -21,6 +21,9 @@ A browser-only PDF editor inspired by my supplied desktop Simple PDF Python Sour
 - Zoom in/out, typed zoom, fit to window
 - Copy/paste selected edits
 - Keyboard shortcuts modeled after the desktop version
+- Mouse, touch and stylus input through browser Pointer Events
+- Two-finger pinch zoom and touch panning support on phones/tablets
+- Responsive toolbar for desktop, tablet and mobile screens
 
 ## Keyboard shortcuts
 
@@ -39,6 +42,18 @@ A browser-only PDF editor inspired by my supplied desktop Simple PDF Python Sour
 - `Ctrl/Cmd + 0` Fit
 - With a selection: `R` rotate, `1` widen, `3` shrink width, `2` heighten, `4` shrink height
 
+## Device and browser support
+
+The editor is designed for current versions of:
+
+- Windows, macOS, Linux and ChromeOS desktops/laptops
+- iPhone and iPad
+- Android phones and tablets
+- Chrome, Edge, Firefox and Safari
+- Mouse, touchscreen, Apple Pencil, Surface Pen and compatible Android styluses
+
+Exact stylus button behavior can vary by operating system and browser, but drawing, selecting, moving, resizing, rotating, importing and exporting use standard browser APIs whenever possible.
+
 ## GitHub Pages
 
 1. Create a GitHub repository.
@@ -53,4 +68,8 @@ A browser-only PDF editor inspired by my supplied desktop Simple PDF Python Sour
 
 The app loads PDF.js and pdf-lib from cdnjs, so the hosted page needs internet access when it first loads those libraries.
 
-Does not autosave
+## Does not autosave
+
+This web version **does not autosave** changes back to the original PDF.
+
+A normal GitHub Pages website cannot silently overwrite arbitrary local files because of browser security rules. Use **Save As** to export/download the edited PDF when you want to keep your changes.
