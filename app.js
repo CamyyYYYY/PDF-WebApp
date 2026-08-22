@@ -67,7 +67,12 @@ async function openPdfFile(file){
     }
     state.sourceBytes=bytes; state.pdfjsDoc=doc; state.pages=pages; state.pageIndex=0; state.zoom=1; state.filename=file.name;
     state.undo=[]; state.redo=[]; state.selected=[];
-    showEditor(); await renderPage(); updateStatus(`Imported: ${file.name}`);
+    showEditor();
+    await nextFrame();
+    state.zoom=fitZoomForCurrentPage();
+    await renderPage();
+    centerPageInViewport();
+    updateStatus(`Imported: ${file.name}`);
   }catch(e){ console.error(e); toast('Could not open that PDF.'); }
 }
 
@@ -77,20 +82,45 @@ function pageSize(name){
 async function createNewPdf(){
   const [w,h]=pageSize(els.pageSizeSelect.value);
   state.sourceBytes=null; state.pdfjsDoc=null; state.pages=[{sourcePage:null,width:w,height:h,annotations:[]}]; state.pageIndex=0; state.zoom=1; state.filename='new_pdf.pdf';
-  state.undo=[]; state.redo=[]; state.selected=[]; showEditor(); await renderPage(); updateStatus('Created new PDF. Use Save As to download it.');
+  state.undo=[]; state.redo=[]; state.selected=[];
+  showEditor();
+  await nextFrame();
+  state.zoom=fitZoomForCurrentPage();
+  await renderPage();
+  centerPageInViewport();
+  updateStatus('Created new PDF. Use Save As to download it.');
 }
 function showEditor(){ els.emptyState.classList.add('hidden'); els.scrollArea.classList.remove('hidden'); updateUI(); }
 
 async function renderPage(){
   const p=page(); if(!p)return; const token=++state.renderToken;
-  const cssW=p.width*state.zoom, cssH=p.height*state.zoom; const dpr=window.devicePixelRatio||1;
-  for(const c of [els.pdfCanvas,els.overlayCanvas]){ c.width=Math.max(1,Math.round(cssW*dpr)); c.height=Math.max(1,Math.round(cssH*dpr)); c.style.width=`${cssW}px`; c.style.height=`${cssH}px`; }
-  els.pageStage.style.width=`${cssW}px`; els.pageStage.style.height=`${cssH}px`;
-  pdfCtx.setTransform(dpr,0,0,dpr,0,0); pdfCtx.clearRect(0,0,cssW,cssH); pdfCtx.fillStyle='#fff'; pdfCtx.fillRect(0,0,cssW,cssH);
+  const cssW=p.width*state.zoom, cssH=p.height*state.zoom; const dpr=Math.max(1,window.devicePixelRatio||1);
+  for(const c of [els.pdfCanvas,els.overlayCanvas]){
+    c.width=Math.max(1,Math.round(cssW*dpr));
+    c.height=Math.max(1,Math.round(cssH*dpr));
+    c.style.width=`${cssW}px`;
+    c.style.height=`${cssH}px`;
+  }
+  els.pageStage.style.width=`${cssW}px`;
+  els.pageStage.style.height=`${cssH}px`;
+
+  // The PDF canvas is physically DPR-sized for crisp text, but PDF.js must
+  // receive the DPR scale only once. Applying it to the context AND passing
+  // it as PDF.js' transform caused high-DPI displays to show only the
+  // upper-left corner of a magnified page.
+  pdfCtx.setTransform(1,0,0,1,0,0);
+  pdfCtx.clearRect(0,0,els.pdfCanvas.width,els.pdfCanvas.height);
+  pdfCtx.fillStyle='#fff';
+  pdfCtx.fillRect(0,0,els.pdfCanvas.width,els.pdfCanvas.height);
+
   if(p.sourcePage!==null && state.pdfjsDoc){
     const src=await state.pdfjsDoc.getPage(p.sourcePage+1); if(token!==state.renderToken)return;
     const viewport=src.getViewport({scale:state.zoom});
-    await src.render({canvasContext:pdfCtx,viewport,transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+    await src.render({
+      canvasContext:pdfCtx,
+      viewport,
+      transform:dpr!==1?[dpr,0,0,dpr,0,0]:null
+    }).promise;
   }
   drawOverlay(); updateUI();
 }
@@ -266,8 +296,34 @@ async function deletePage(){ if(state.pages.length<=1){toast('A PDF needs at lea
 async function prevPage(){ if(state.pageIndex>0){state.pageIndex--;state.selected=[];await renderPage();} }
 async function nextPage(){ if(state.pageIndex<state.pages.length-1){state.pageIndex++;state.selected=[];await renderPage();} }
 
-function zoomTo(z){ state.zoom=clamp(z,state.minZoom,state.maxZoom); renderPage(); }
-function fitToWindow(){ if(!page())return; const r=els.scrollArea.getBoundingClientRect(); zoomTo(Math.max(state.minZoom,Math.min(state.maxZoom,(r.width-90)/page().width,(r.height-90)/page().height))); }
+function nextFrame(){ return new Promise(resolve=>requestAnimationFrame(()=>resolve())); }
+function fitZoomForCurrentPage(){
+  if(!page()) return 1;
+  const r=els.scrollArea.getBoundingClientRect();
+  // Leave a modest gutter around the whole page. On small screens use a
+  // smaller gutter so the page still gets as much space as possible.
+  const gutter=Math.min(80,Math.max(20,Math.min(r.width,r.height)*0.08));
+  const availW=Math.max(1,r.width-gutter);
+  const availH=Math.max(1,r.height-gutter);
+  return clamp(Math.min(availW/page().width,availH/page().height),state.minZoom,state.maxZoom);
+}
+function centerPageInViewport(){
+  if(!page())return;
+  const maxX=Math.max(0,els.scrollArea.scrollWidth-els.scrollArea.clientWidth);
+  const maxY=Math.max(0,els.scrollArea.scrollHeight-els.scrollArea.clientHeight);
+  els.scrollArea.scrollLeft=maxX/2;
+  els.scrollArea.scrollTop=maxY/2;
+}
+async function zoomTo(z){
+  state.zoom=clamp(z,state.minZoom,state.maxZoom);
+  await renderPage();
+}
+async function fitToWindow(){
+  if(!page())return;
+  state.zoom=fitZoomForCurrentPage();
+  await renderPage();
+  centerPageInViewport();
+}
 
 async function saveAs(){
   if(!state.pages.length)return; els.saveBtn.disabled=true; els.saveBtn.textContent='Saving...';

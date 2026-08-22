@@ -19,6 +19,7 @@ A browser-only PDF editor inspired by my supplied desktop **Simple PDF Python So
 - Undo / redo
 - Delete selected edits / clear page
 - Zoom in/out, typed zoom, fit to window
+- Imported PDFs open fitted to the available window so the full page is visible
 - Copy/paste selected edits
 - Keyboard shortcuts modeled after the desktop version
 - Mouse, touch and stylus input through browser Pointer Events
