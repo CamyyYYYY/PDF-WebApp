@@ -1,6 +1,6 @@
 # Simple PDF Editor (JavaScript / GitHub Pages)
 
-A browser-only PDF editor inspired by the supplied desktop Simple PDF Editor. It uses **HTML, CSS, and JavaScript only** — no Python and no backend.
+A browser-only PDF editor inspired by my supplied desktop Simple PDF Python Source Code Editor. It uses **HTML, CSS, and JavaScript only** — no Python and no backend.
 
 ## Features
 
@@ -38,18 +38,6 @@ A browser-only PDF editor inspired by the supplied desktop Simple PDF Editor. It
 - `Page Up / Page Down` Previous / next page
 - `Ctrl/Cmd + 0` Fit
 - With a selection: `R` rotate, `1` widen, `3` shrink width, `2` heighten, `4` shrink height
-
-## GitHub Pages
-
-1. Create a GitHub repository.
-2. Put these four files in the repository root:
-   - `index.html`
-   - `styles.css`
-   - `app.js`
-   - `README.md`
-3. Push to the `main` branch.
-4. In GitHub, open **Settings → Pages**.
-5. Choose **Deploy from a branch**, `main`, `/ (root)`.
 
 The app loads PDF.js and pdf-lib from cdnjs, so the hosted page needs internet access when it first loads those libraries.
 
