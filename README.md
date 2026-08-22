@@ -43,4 +43,4 @@ The app loads PDF.js and pdf-lib from cdnjs, so the hosted page needs internet a
 
 ## Browser limitation
 
-Desktop Python apps can directly overwrite a file on disk after the user has opened it. A normal GitHub Pages website cannot silently overwrite arbitrary local files because of browser security rules. Therefore this version uses **Save As** to download the edited PDF. All editing itself remains local in the browser.
+Desktop Python apps can directly overwrite a file on disk after the user has opened it. This GitHub Pages website cannot silently overwrite arbitrary local files because of browser security rules. Therefore this version uses **Save As** to download the edited PDF. All editing itself remains local in the browser.
