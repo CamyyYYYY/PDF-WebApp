@@ -25,6 +25,9 @@ A browser-only PDF editor inspired by my supplied desktop **Simple PDF Python So
 - Mouse, touch and stylus input through browser Pointer Events
 - Two-finger pinch zoom and touch panning support on phones/tablets
 - Responsive toolbar for desktop, tablet and mobile screens
+- IndexedDB recovery autosave that continuously replaces one recovery draft instead of accumulating copies
+- Restore prompt after a tab/browser closes unexpectedly
+- Recovery draft is automatically removed after export and stale drafts are cleaned after 30 days
 
 ## Keyboard shortcuts
 
@@ -69,8 +72,17 @@ Exact stylus button behavior can vary by operating system and browser, but drawi
 
 The app loads PDF.js and pdf-lib from cdnjs, so the hosted page needs internet access when it first loads those libraries.
 
-## Does not autosave
+## Recovery autosave
 
-This web version **does not autosave** changes back to the original PDF.
+This web version **does autosave a recovery draft inside the user's browser using IndexedDB**. It does **not** autosave changes back over the original PDF file.
 
-A normal GitHub Pages website cannot silently overwrite arbitrary local files because of browser security rules. Use **Save As** to export/download the edited PDF when you want to keep your changes.
+- Only one current recovery record is kept, so autosaves replace the same record instead of creating endless copies.
+- Recovery storage stays on that user's device/browser and does not use GitHub repository storage.
+- If the tab or browser closes unexpectedly, reopening the app offers to restore the unsaved PDF.
+- After a successful **Save As / Export**, the recovery draft is removed.
+- Recovery drafts older than 30 days are automatically cleaned up.
+- Browser storage quotas still apply, so an unusually large PDF can fail to autosave if the device/browser does not have enough available site storage.
+
+## Does not autosave over the original PDF
+
+A normal GitHub Pages website cannot silently overwrite arbitrary local files because of browser security rules. Use **Save As** to export/download the edited PDF when you want to keep the finished file.
