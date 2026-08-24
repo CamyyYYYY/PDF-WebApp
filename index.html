@@ -10,8 +10,8 @@
 <body>
 <div class="app" id="app">
   <header class="mobile-bar">
-    <strong>Cam PDF Editor</strong>
-    <button id="toolsToggleBtn" class="tools-toggle" type="button" aria-expanded="false">Tools</button>
+    <strong>Simple PDF Editor</strong>
+    <button id="toolsToggleBtn" type="button" aria-expanded="false">Tools</button>
   </header>
 
   <header id="toolbarWrap" class="toolbar-wrap">
@@ -49,7 +49,7 @@
 <input id="pdfInput" type="file" accept="application/pdf,.pdf" hidden>
 <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden>
 <dialog id="newDialog"><form method="dialog" id="newForm"><h2>Create PDF</h2><label>Choose PDF type<select id="pageSizeSelect"><option>Letter - Portrait</option><option>Letter - Landscape</option><option>A4 - Portrait</option><option>A4 - Landscape</option><option>Square</option></select></label><div class="dialog-actions"><button value="cancel">Cancel</button><button id="createPdfBtn" value="default">Create</button></div></form></dialog>
-<dialog id="textDialog"><form method="dialog" id="textForm"><h2 id="textDialogTitle">Add Text</h2><textarea id="textInput" rows="5" placeholder="Type text here..."></textarea><div class="dialog-actions"><button id="cancelTextBtn" type="button">Cancel</button><button id="confirmTextBtn" type="submit">OK</button></div></form></dialog>
+<dialog id="textDialog"><form method="dialog" id="textForm"><h2>Add Text</h2><textarea id="textInput" rows="5" placeholder="Type text here..."></textarea><div class="dialog-actions"><button id="cancelTextBtn" type="button">Cancel</button><button type="submit">OK</button></div></form></dialog>
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>
 </body>
