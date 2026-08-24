@@ -1,577 +1,106 @@
-/* global pdfjsLib, PDFLib */
+(() => {
+'use strict';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
 const $ = (id) => document.getElementById(id);
 const els = {
-  fileInput: $('fileInput'), openBtn: $('openBtn'), chooseBtn: $('chooseBtn'), exportBtn: $('exportBtn'),
-  emptyState: $('emptyState'), editor: $('editor'), dropZone: $('dropZone'), thumbs: $('thumbs'), pageCount: $('pageCount'),
-  pdfCanvas: $('pdfCanvas'), overlayCanvas: $('overlayCanvas'), pageStage: $('pageStage'), documentArea: $('documentArea'),
-  fileName: $('fileName'), pageStatus: $('pageStatus'), zoomLabel: $('zoomLabel'), zoomIn: $('zoomIn'), zoomOut: $('zoomOut'),
-  fontSize: $('fontSize'), colorPicker: $('colorPicker'), undoBtn: $('undoBtn'), rotateBtn: $('rotateBtn'), deleteBtn: $('deleteBtn'),
-  textDialog: $('textDialog'), textForm: $('textForm'), textInput: $('textInput'), cancelText: $('cancelText'), toast: $('toast')
+  newBtn:$('newBtn'), importBtn:$('importBtn'), saveBtn:$('saveBtn'), addPageBtn:$('addPageBtn'), delPageBtn:$('delPageBtn'), prevBtn:$('prevBtn'), nextBtn:$('nextBtn'), pageLabel:$('pageLabel'),
+  imageBtn:$('imageBtn'), colorPicker:$('colorPicker'), undoBtn:$('undoBtn'), redoBtn:$('redoBtn'), deleteSelectedBtn:$('deleteSelectedBtn'), clearPageBtn:$('clearPageBtn'),
+  penWidth:$('penWidth'), highlightWidth:$('highlightWidth'), eraserWidth:$('eraserWidth'), textSize:$('textSize'), zoomOutBtn:$('zoomOutBtn'), zoomInBtn:$('zoomInBtn'), zoomInput:$('zoomInput'), applyZoomBtn:$('applyZoomBtn'), fitBtn:$('fitBtn'), zoomLabel:$('zoomLabel'), toolLabel:$('toolLabel'),
+  workspace:$('workspace'), emptyState:$('emptyState'), emptyNewBtn:$('emptyNewBtn'), emptyImportBtn:$('emptyImportBtn'), scrollArea:$('scrollArea'), pageStage:$('pageStage'), pdfCanvas:$('pdfCanvas'), overlayCanvas:$('overlayCanvas'),
+  status:$('status'), selectionStatus:$('selectionStatus'), pdfInput:$('pdfInput'), imageInput:$('imageInput'), newDialog:$('newDialog'), newForm:$('newForm'), pageSizeSelect:$('pageSizeSelect'), createPdfBtn:$('createPdfBtn'), textDialog:$('textDialog'), textForm:$('textForm'), textDialogTitle:$('textDialogTitle'), textInput:$('textInput'), cancelTextBtn:$('cancelTextBtn'), toast:$('toast')
 };
-
-const state = {
-  bytes: null,
-  pdf: null,
-  filename: 'edited.pdf',
-  page: 1,
-  zoom: 1,
-  baseScale: 1.35,
-  tool: 'select',
-  pageStates: [],
-  pendingTextPoint: null,
-  drawing: false,
-  currentStroke: null,
-  renderToken: 0
-};
-
-const pdfCtx = els.pdfCanvas.getContext('2d');
+const pdfCtx = els.pdfCanvas.getContext('2d', {alpha:false});
 const overlayCtx = els.overlayCanvas.getContext('2d');
 
-// ---------- IndexedDB recovery autosave ----------
-// Keeps ONE revolving recovery record on the user's device. It never uploads
-// recovery data to GitHub and it never creates a growing series of PDF copies.
-const RECOVERY_DB_NAME = 'SimplePDFEditorRecovery';
-const RECOVERY_DB_VERSION = 1;
-const RECOVERY_STORE = 'drafts';
-const RECOVERY_KEY = 'current';
-const RECOVERY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-let recoveryTimer = null;
-let recoveryDbPromise = null;
+const state = {
+  sourceBytes:null, sourcePdf:null, pages:[], page:0, tool:'select', zoom:1, fitScale:1, filename:'edited.pdf',
+  selected:[], clipboard:[], undo:[], redo:[], pointer:null, currentStroke:null, renderToken:0, imageCache:new Map(), pinch:null,
+  recoveryTimer:null, lastFitKey:'', editingTextIndex:null, pendingTextPoint:null
+};
 
-function openRecoveryDb() {
-  if (!('indexedDB' in window)) return Promise.resolve(null);
-  if (recoveryDbPromise) return recoveryDbPromise;
+const RECOVERY_DB='SimplePDFEditorRecovery', STORE='drafts', KEY='current', MAX_AGE=30*24*60*60*1000;
+function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
+function deepClone(v){return typeof structuredClone==='function'?structuredClone(v):JSON.parse(JSON.stringify(v));}
+function page(){return state.pages[state.page] || null;}
+function active(){return state.pages.length>0;}
+function cssScale(){return state.zoom;}
+function dpr(){return clamp(window.devicePixelRatio||1,1,3);}
+function showToast(msg){els.toast.textContent=msg;els.toast.classList.remove('hidden');clearTimeout(showToast.t);showToast.t=setTimeout(()=>els.toast.classList.add('hidden'),2300);}
+function setStatus(msg){els.status.textContent=msg;}
+function isTypingTarget(t){return t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);}
 
-  recoveryDbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(RECOVERY_DB_NAME, RECOVERY_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(RECOVERY_STORE)) {
-        db.createObjectStore(RECOVERY_STORE, { keyPath: 'id' });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  }).catch((error) => {
-    console.warn('Recovery storage unavailable:', error);
-    return null;
-  });
+function openDb(){return new Promise((resolve)=>{if(!('indexedDB'in window))return resolve(null);const r=indexedDB.open(RECOVERY_DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>resolve(null);});}
+async function recoveryPut(){if(!active())return;const db=await openDb();if(!db)return;const rec={id:KEY,savedAt:Date.now(),filename:state.filename,page:state.page,zoom:state.zoom,pages:state.pages,sourceBytes:state.sourceBytes?state.sourceBytes.slice().buffer:null};await new Promise(res=>{try{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(rec);tx.oncomplete=tx.onerror=tx.onabort=()=>res();}catch{res();}});}
+function scheduleRecovery(delay=700){clearTimeout(state.recoveryTimer);state.recoveryTimer=setTimeout(recoveryPut,delay);}
+async function recoveryGet(){const db=await openDb();if(!db)return null;return new Promise(res=>{try{const tx=db.transaction(STORE,'readonly'),r=tx.objectStore(STORE).get(KEY);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}catch{res(null);}});}
+async function recoveryClear(){clearTimeout(state.recoveryTimer);const db=await openDb();if(!db)return;await new Promise(res=>{try{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).delete(KEY);tx.oncomplete=tx.onerror=tx.onabort=()=>res();}catch{res();}});}
+async function restoreRecovery(){const r=await recoveryGet();if(!r)return;if(!r.savedAt||Date.now()-r.savedAt>MAX_AGE){await recoveryClear();return;}if(!confirm(`Recover unsaved PDF?\n\n${r.filename||'Unsaved PDF'}\nLast recovery: ${new Date(r.savedAt).toLocaleString()}`)){await recoveryClear();return;}try{state.sourceBytes=r.sourceBytes?new Uint8Array(r.sourceBytes):null;state.sourcePdf=state.sourceBytes?await pdfjsLib.getDocument({data:state.sourceBytes.slice()}).promise:null;state.pages=Array.isArray(r.pages)?r.pages:[];state.page=clamp(r.page||0,0,Math.max(0,state.pages.length-1));state.zoom=Number(r.zoom)||1;state.filename=r.filename||'recovered.pdf';openEditor();await fitToWindow(true);showToast('Recovery restored.');}catch(e){console.error(e);await recoveryClear();}}
 
-  return recoveryDbPromise;
-}
+function snapshot(){state.undo.push({pages:deepClone(state.pages),page:state.page});if(state.undo.length>60)state.undo.shift();state.redo=[];}
+function restoreSnap(s){state.pages=deepClone(s.pages);state.page=clamp(s.page,0,state.pages.length-1);state.selected=[];renderPage();refreshUI();scheduleRecovery();}
+function undo(){if(!state.undo.length)return;state.redo.push({pages:deepClone(state.pages),page:state.page});restoreSnap(state.undo.pop());}
+function redo(){if(!state.redo.length)return;state.undo.push({pages:deepClone(state.pages),page:state.page});restoreSnap(state.redo.pop());}
 
-async function putRecovery(record) {
-  const db = await openRecoveryDb();
-  if (!db) return false;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(RECOVERY_STORE, 'readwrite');
-      tx.objectStore(RECOVERY_STORE).put(record);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => {
-        console.warn('Recovery autosave failed:', tx.error);
-        resolve(false);
-      };
-      tx.onabort = () => resolve(false);
-    } catch (error) {
-      console.warn('Recovery autosave failed:', error);
-      resolve(false);
-    }
-  });
-}
+function openEditor(){els.emptyState.classList.add('hidden');els.scrollArea.classList.remove('hidden');refreshUI();}
+function refreshUI(){const n=state.pages.length, p=active()?state.page+1:0;els.pageLabel.textContent=`Page ${p} / ${n}`;els.zoomLabel.textContent=`Zoom ${Math.round(state.zoom*100)}%`;els.zoomInput.value=Math.round(state.zoom*100);els.toolLabel.textContent=`Tool: ${state.tool[0].toUpperCase()+state.tool.slice(1)}`;const on=active();[els.saveBtn,els.addPageBtn,els.delPageBtn,els.imageBtn,els.zoomOutBtn,els.zoomInBtn,els.applyZoomBtn,els.fitBtn,els.clearPageBtn].forEach(b=>b.disabled=!on);els.prevBtn.disabled=!on||state.page<=0;els.nextBtn.disabled=!on||state.page>=n-1;els.undoBtn.disabled=!state.undo.length;els.redoBtn.disabled=!state.redo.length;els.deleteSelectedBtn.disabled=!state.selected.length;els.selectionStatus.textContent=state.selected.length?`${state.selected.length} selected`:'';document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active',b.dataset.tool===state.tool));}
+function setTool(t){state.tool=t;state.pointer=null;state.currentStroke=null;els.overlayCanvas.style.cursor=t==='text'?'text':t==='pan'?'grab':t==='select'?'default':'crosshair';refreshUI();}
 
-async function getRecovery() {
-  const db = await openRecoveryDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(RECOVERY_STORE, 'readonly');
-      const request = tx.objectStore(RECOVERY_STORE).get(RECOVERY_KEY);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => resolve(null);
-    } catch (error) {
-      resolve(null);
-    }
-  });
-}
+async function loadPdf(file){if(!file)return;if(!(file.type==='application/pdf'||/\.pdf$/i.test(file.name))){showToast('Choose a PDF file.');return;}try{const buf=await file.arrayBuffer();state.sourceBytes=new Uint8Array(buf);state.sourcePdf=await pdfjsLib.getDocument({data:state.sourceBytes.slice()}).promise;state.pages=[];for(let i=1;i<=state.sourcePdf.numPages;i++){const p=await state.sourcePdf.getPage(i);const vp=p.getViewport({scale:1});state.pages.push({sourceIndex:i-1,width:vp.width,height:vp.height,annotations:[]});}state.page=0;state.undo=[];state.redo=[];state.selected=[];state.filename=file.name.replace(/\.pdf$/i,'')+'-edited.pdf';openEditor();await fitToWindow(true);scheduleRecovery(0);setStatus(`Imported ${file.name}. Recovery autosave is on.`);}catch(e){console.error(e);showToast('Could not open that PDF.');}}
+function newPdf(sizeName){const sizes={'Letter - Portrait':[612,792],'Letter - Landscape':[792,612],'A4 - Portrait':[595,842],'A4 - Landscape':[842,595],'Square':[612,612]};const [w,h]=sizes[sizeName]||sizes['Letter - Portrait'];state.sourceBytes=null;state.sourcePdf=null;state.pages=[{sourceIndex:null,width:w,height:h,annotations:[]}];state.page=0;state.undo=[];state.redo=[];state.selected=[];state.filename='new_pdf.pdf';openEditor();fitToWindow(true);scheduleRecovery(0);setStatus('Created a new PDF. Recovery autosave is on.');}
 
-async function clearRecovery() {
-  clearTimeout(recoveryTimer);
-  recoveryTimer = null;
-  const db = await openRecoveryDb();
-  if (!db) return;
-  await new Promise((resolve) => {
-    try {
-      const tx = db.transaction(RECOVERY_STORE, 'readwrite');
-      tx.objectStore(RECOVERY_STORE).delete(RECOVERY_KEY);
-      tx.oncomplete = resolve;
-      tx.onerror = resolve;
-      tx.onabort = resolve;
-    } catch (error) {
-      resolve();
-    }
-  });
-}
+async function renderPage(){if(!active())return;const tok=++state.renderToken,p=page(),scale=state.zoom,cssW=Math.max(1,p.width*scale),cssH=Math.max(1,p.height*scale),ratio=dpr();els.pageStage.style.width=`${cssW}px`;els.pageStage.style.height=`${cssH}px`;for(const c of [els.pdfCanvas,els.overlayCanvas]){c.style.width=`${cssW}px`;c.style.height=`${cssH}px`;c.width=Math.max(1,Math.round(cssW*ratio));c.height=Math.max(1,Math.round(cssH*ratio));}pdfCtx.setTransform(ratio,0,0,ratio,0,0);pdfCtx.fillStyle='#fff';pdfCtx.fillRect(0,0,cssW,cssH);pdfCtx.setTransform(1,0,0,1,0,0);if(p.sourceIndex!==null&&state.sourcePdf){const src=await state.sourcePdf.getPage(p.sourceIndex+1);if(tok!==state.renderToken)return;const vp=src.getViewport({scale});await src.render({canvasContext:pdfCtx,viewport:vp,transform:ratio!==1?[ratio,0,0,ratio,0,0]:null}).promise;}drawOverlay();refreshUI();}
+function drawOverlay(){if(!active())return;const p=page(),scale=state.zoom,ratio=dpr();overlayCtx.setTransform(ratio,0,0,ratio,0,0);overlayCtx.clearRect(0,0,p.width*scale,p.height*scale);for(let i=0;i<p.annotations.length;i++)drawAnn(p.annotations[i],i,scale);drawSelection(scale);}
+function drawAnn(a,i,s){overlayCtx.save();if(a.type==='stroke'||a.type==='highlight'){overlayCtx.globalAlpha=a.type==='highlight'?.35:1;overlayCtx.strokeStyle=a.color;overlayCtx.lineWidth=Math.max(1,a.width*s);overlayCtx.lineCap='round';overlayCtx.lineJoin='round';overlayCtx.beginPath();a.points.forEach((pt,k)=>k?overlayCtx.lineTo(pt.x*s,pt.y*s):overlayCtx.moveTo(pt.x*s,pt.y*s));overlayCtx.stroke();}else if(a.type==='text'){overlayCtx.translate(a.x*s,a.y*s);overlayCtx.rotate((a.rotation||0)*Math.PI/180);overlayCtx.fillStyle=a.color;overlayCtx.font=`${a.size*s}px Arial`;overlayCtx.textBaseline='top';a.text.split('\n').forEach((line,k)=>overlayCtx.fillText(line,0,k*a.size*1.2*s));}else if(a.type==='image'){const img=state.imageCache.get(a.dataUrl);if(img?.complete){overlayCtx.translate((a.x+a.w/2)*s,(a.y+a.h/2)*s);overlayCtx.rotate((a.rotation||0)*Math.PI/180);overlayCtx.drawImage(img,-a.w*s/2,-a.h*s/2,a.w*s,a.h*s);}else if(!img){const im=new Image();state.imageCache.set(a.dataUrl,im);im.onload=drawOverlay;im.src=a.dataUrl;}}overlayCtx.restore();}
+function bbox(a){if(a.type==='stroke'||a.type==='highlight'){const xs=a.points.map(p=>p.x),ys=a.points.map(p=>p.y),pad=Math.max(5,a.width/2);return [Math.min(...xs)-pad,Math.min(...ys)-pad,Math.max(...xs)+pad,Math.max(...ys)+pad];}if(a.type==='text'){const lines=a.text.split('\n');const w=Math.max(28,...lines.map(x=>x.length*a.size*.58)),h=Math.max(a.size*1.25,lines.length*a.size*1.2);return[a.x,a.y,a.x+w,a.y+h];}if(a.type==='image')return[a.x,a.y,a.x+a.w,a.y+a.h];return null;}
+function groupBox(indices=state.selected){const bs=indices.map(i=>bbox(page().annotations[i])).filter(Boolean);if(!bs.length)return null;return[Math.min(...bs.map(b=>b[0])),Math.min(...bs.map(b=>b[1])),Math.max(...bs.map(b=>b[2])),Math.max(...bs.map(b=>b[3]))];}
+function drawSelection(s){const b=groupBox();if(!b)return;overlayCtx.save();overlayCtx.strokeStyle='#1683ff';overlayCtx.lineWidth=2;overlayCtx.setLineDash([5,4]);overlayCtx.strokeRect(b[0]*s,b[1]*s,(b[2]-b[0])*s,(b[3]-b[1])*s);overlayCtx.setLineDash([]);overlayCtx.fillStyle='#1683ff';overlayCtx.fillRect(b[2]*s-7,b[3]*s-7,14,14);const cx=(b[0]+b[2])/2*s,y=b[1]*s;overlayCtx.beginPath();overlayCtx.moveTo(cx,y);overlayCtx.lineTo(cx,y-28);overlayCtx.stroke();overlayCtx.fillStyle='#12a36d';overlayCtx.beginPath();overlayCtx.arc(cx,y-36,8,0,Math.PI*2);overlayCtx.fill();overlayCtx.restore();}
+function point(evt){const r=els.overlayCanvas.getBoundingClientRect();return{x:clamp((evt.clientX-r.left)/state.zoom,0,page().width),y:clamp((evt.clientY-r.top)/state.zoom,0,page().height)};}
+function hit(pt){const anns=page().annotations;for(let i=anns.length-1;i>=0;i--){const b=bbox(anns[i]);if(b&&pt.x>=b[0]&&pt.x<=b[2]&&pt.y>=b[1]&&pt.y<=b[3])return i;}return null;}
+function nearResize(pt,b){const t=14/state.zoom;return Math.abs(pt.x-b[2])<t&&Math.abs(pt.y-b[3])<t;}
+function nearRotate(pt,b){const t=16/state.zoom,cx=(b[0]+b[2])/2,cy=b[1]-36/state.zoom;return Math.hypot(pt.x-cx,pt.y-cy)<t;}
+function translateAnn(a,dx,dy){if(a.type==='stroke'||a.type==='highlight')a.points=a.points.map(p=>({x:p.x+dx,y:p.y+dy}));else{a.x+=dx;a.y+=dy;}}
+function scaleAnn(a,b,sx,sy){if(a.type==='stroke'||a.type==='highlight'){a.points=a.points.map(p=>({x:b[0]+(p.x-b[0])*sx,y:b[1]+(p.y-b[1])*sy}));a.width*=Math.max(.1,(sx+sy)/2);}else{a.x=b[0]+(a.x-b[0])*sx;a.y=b[1]+(a.y-b[1])*sy;if(a.type==='image'){a.w*=sx;a.h*=sy;}else if(a.type==='text')a.size*=sy;}}
+function rotateAnn(a,cx,cy,deg){const rad=deg*Math.PI/180,rot=(x,y)=>({x:cx+(x-cx)*Math.cos(rad)-(y-cy)*Math.sin(rad),y:cy+(x-cx)*Math.sin(rad)+(y-cy)*Math.cos(rad)});if(a.type==='stroke'||a.type==='highlight')a.points=a.points.map(p=>rot(p.x,p.y));else{const p=rot(a.x,a.y);a.x=p.x;a.y=p.y;a.rotation=((a.rotation||0)+deg)%360;}}
+function eraseAt(pt){const rad=(Number(els.eraserWidth.value)||20)/2;const anns=page().annotations;let changed=false;for(let i=anns.length-1;i>=0;i--){const b=bbox(anns[i]);if(!b)continue;const nx=clamp(pt.x,b[0],b[2]),ny=clamp(pt.y,b[1],b[3]);if(Math.hypot(pt.x-nx,pt.y-ny)<=rad){anns.splice(i,1);changed=true;}}if(changed){state.selected=[];drawOverlay();}}
 
-async function cleanupStaleRecovery() {
-  const draft = await getRecovery();
-  if (!draft) return;
-  if (!draft.savedAt || Date.now() - draft.savedAt > RECOVERY_MAX_AGE_MS) {
-    await clearRecovery();
-  }
-}
+const pointers=new Map();
+els.overlayCanvas.addEventListener('pointerdown',(e)=>{if(!active())return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});if(pointers.size===2){const arr=[...pointers.values()],dist=Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y);state.pinch={dist,zoom:state.zoom};state.pointer=null;state.currentStroke=null;return;}if(pointers.size>1)return;const pt=point(e);if(state.tool==='text'){state.pendingTextPoint=pt;state.editingTextIndex=null;els.textDialogTitle.textContent='Add Text';els.textInput.value='';els.textDialog.showModal();return;}if(state.tool==='pan'){state.pointer={mode:'pan',x:e.clientX,y:e.clientY,left:els.scrollArea.scrollLeft,top:els.scrollArea.scrollTop};els.overlayCanvas.style.cursor='grabbing';return;}if(state.tool==='pen'||state.tool==='highlight'){snapshot();const a={type:state.tool==='pen'?'stroke':'highlight',points:[pt],color:state.tool==='highlight'?'#ffff00':els.colorPicker.value,width:Number(state.tool==='pen'?els.penWidth.value:els.highlightWidth.value)||3};page().annotations.push(a);state.currentStroke=a;state.pointer={mode:'draw'};els.overlayCanvas.setPointerCapture?.(e.pointerId);drawOverlay();return;}if(state.tool==='erase'){snapshot();state.pointer={mode:'erase'};eraseAt(pt);return;}if(state.tool==='select'){const b=groupBox();if(b&&nearRotate(pt,b)){snapshot();state.pointer={mode:'rotate',start:pt,base:deepClone(page().annotations),box:b};return;}if(b&&nearResize(pt,b)){snapshot();state.pointer={mode:'resize',start:pt,base:deepClone(page().annotations),box:b};return;}const h=hit(pt);if(h!==null){if(!state.selected.includes(h))state.selected=[h];snapshot();state.pointer={mode:'move',start:pt,base:deepClone(page().annotations)};}else{state.selected=[];state.pointer={mode:'box',start:pt,rect:[pt.x,pt.y,pt.x,pt.y]};}drawOverlay();refreshUI();}});
+els.overlayCanvas.addEventListener('pointermove',(e)=>{if(pointers.has(e.pointerId))pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});if(state.pinch&&pointers.size>=2){const arr=[...pointers.values()],dist=Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y);state.zoom=clamp(state.pinch.zoom*(dist/state.pinch.dist),.1,4);scheduleRender();return;}if(!state.pointer)return;const pt=point(e);if(state.pointer.mode==='pan'){els.scrollArea.scrollLeft=state.pointer.left-(e.clientX-state.pointer.x);els.scrollArea.scrollTop=state.pointer.top-(e.clientY-state.pointer.y);return;}if(state.pointer.mode==='draw'&&state.currentStroke){state.currentStroke.points.push(pt);drawOverlay();return;}if(state.pointer.mode==='erase'){eraseAt(pt);return;}if(state.pointer.mode==='move'){const dx=pt.x-state.pointer.start.x,dy=pt.y-state.pointer.start.y;page().annotations=deepClone(state.pointer.base);state.selected.forEach(i=>translateAnn(page().annotations[i],dx,dy));drawOverlay();return;}if(state.pointer.mode==='resize'){const b=state.pointer.box,sx=Math.max(.05,(pt.x-b[0])/Math.max(1,b[2]-b[0])),sy=Math.max(.05,(pt.y-b[1])/Math.max(1,b[3]-b[1]));page().annotations=deepClone(state.pointer.base);state.selected.forEach(i=>scaleAnn(page().annotations[i],b,sx,sy));drawOverlay();return;}if(state.pointer.mode==='rotate'){const b=state.pointer.box,cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2,a0=Math.atan2(state.pointer.start.y-cy,state.pointer.start.x-cx),a1=Math.atan2(pt.y-cy,pt.x-cx),deg=(a1-a0)*180/Math.PI;page().annotations=deepClone(state.pointer.base);state.selected.forEach(i=>rotateAnn(page().annotations[i],cx,cy,deg));drawOverlay();return;}if(state.pointer.mode==='box'){state.pointer.rect=[Math.min(state.pointer.start.x,pt.x),Math.min(state.pointer.start.y,pt.y),Math.max(state.pointer.start.x,pt.x),Math.max(state.pointer.start.y,pt.y)];const r=state.pointer.rect;state.selected=page().annotations.map((a,i)=>({i,b:bbox(a)})).filter(o=>o.b&&!(o.b[2]<r[0]||o.b[0]>r[2]||o.b[3]<r[1]||o.b[1]>r[3])).map(o=>o.i);drawOverlay();}});
+function pointerEnd(e){pointers.delete(e.pointerId);if(state.pinch){if(pointers.size<2){state.pinch=null;renderPage();scheduleRecovery();}return;}if(!state.pointer)return;const mode=state.pointer.mode;state.pointer=null;state.currentStroke=null;if(mode==='pan')els.overlayCanvas.style.cursor='grab';if(mode!=='box'&&mode!=='pan')scheduleRecovery();refreshUI();}
+els.overlayCanvas.addEventListener('pointerup',pointerEnd);els.overlayCanvas.addEventListener('pointercancel',pointerEnd);els.overlayCanvas.addEventListener('lostpointercapture',pointerEnd);
+let renderRAF=0;function scheduleRender(){if(renderRAF)return;renderRAF=requestAnimationFrame(async()=>{renderRAF=0;await renderPage();});}
+els.overlayCanvas.addEventListener('dblclick',(e)=>{if(state.tool!=='select')return;const i=hit(point(e));if(i===null||page().annotations[i].type!=='text')return;state.editingTextIndex=i;els.textDialogTitle.textContent='Edit Text';els.textInput.value=page().annotations[i].text;els.textDialog.showModal();});
 
-async function saveRecoveryNow() {
-  if (!state.bytes || !state.pdf) return;
-  const record = {
-    id: RECOVERY_KEY,
-    savedAt: Date.now(),
-    sourceName: els.fileName.textContent || state.filename,
-    filename: state.filename,
-    page: state.page,
-    zoom: state.zoom,
-    baseScale: state.baseScale,
-    pageStates: state.pageStates,
-    // Store one copy of the imported PDF bytes plus the editor state.
-    // The next autosave REPLACES this same record.
-    bytes: state.bytes.slice().buffer
-  };
-  await putRecovery(record);
-}
+els.textForm.addEventListener('submit',(e)=>{e.preventDefault();const text=els.textInput.value;if(text.trim()){snapshot();if(state.editingTextIndex!==null){const a=page().annotations[state.editingTextIndex];a.text=text;a.color=els.colorPicker.value;a.size=Number(els.textSize.value)||a.size;}else if(state.pendingTextPoint){page().annotations.push({type:'text',x:state.pendingTextPoint.x,y:state.pendingTextPoint.y,text,color:els.colorPicker.value,size:Number(els.textSize.value)||18,rotation:0});}}state.editingTextIndex=null;state.pendingTextPoint=null;els.textDialog.close();drawOverlay();refreshUI();scheduleRecovery();});
+els.cancelTextBtn.addEventListener('click',()=>{state.editingTextIndex=null;state.pendingTextPoint=null;els.textDialog.close();});
 
-function scheduleRecoveryAutosave(delay = 700) {
-  if (!state.bytes || !state.pdf) return;
-  clearTimeout(recoveryTimer);
-  recoveryTimer = setTimeout(() => saveRecoveryNow(), delay);
-}
+els.imageInput.addEventListener('change',()=>{const f=els.imageInput.files?.[0];if(!f)return;const reader=new FileReader();reader.onload=()=>{const im=new Image();im.onload=()=>{snapshot();const maxW=page().width*.45,maxH=page().height*.35,ratio=Math.min(maxW/im.width,maxH/im.height,1),w=im.width*ratio,h=im.height*ratio;page().annotations.push({type:'image',dataUrl:reader.result,x:(page().width-w)/2,y:(page().height-h)/2,w,h,rotation:0});state.imageCache.set(reader.result,im);state.selected=[page().annotations.length-1];drawOverlay();refreshUI();scheduleRecovery();};im.src=reader.result;};reader.readAsDataURL(f);els.imageInput.value='';});
 
-async function restoreRecoveryIfAvailable() {
-  await cleanupStaleRecovery();
-  const draft = await getRecovery();
-  if (!draft?.bytes) return;
+async function fitToWindow(initial=false){if(!active())return;await new Promise(r=>requestAnimationFrame(r));const p=page(),w=Math.max(120,els.scrollArea.clientWidth-36),h=Math.max(120,els.scrollArea.clientHeight-36);state.zoom=clamp(Math.min(w/p.width,h/p.height),.1,4);await renderPage();if(initial){els.scrollArea.scrollLeft=0;els.scrollArea.scrollTop=0;}refreshUI();}
+function applyZoom(){state.zoom=clamp((Number(els.zoomInput.value)||100)/100,.1,4);renderPage();scheduleRecovery();}
+function changeZoom(d){state.zoom=clamp(state.zoom+d,.1,4);renderPage();scheduleRecovery();}
 
-  const saved = draft.savedAt ? new Date(draft.savedAt).toLocaleString() : 'recently';
-  const sourceName = draft.sourceName || 'unsaved PDF';
-  const shouldRestore = window.confirm(`Recover unsaved PDF?\n\n${sourceName}\nLast autosaved: ${saved}\n\nPress OK to restore it, or Cancel to discard the recovery copy.`);
-  if (!shouldRestore) {
-    await clearRecovery();
-    return;
-  }
+function addPage(){if(!active())return;snapshot();const p=page();state.pages.splice(state.page+1,0,{sourceIndex:null,width:p.width,height:p.height,annotations:[]});state.page++;state.selected=[];fitToWindow();scheduleRecovery();}
+function deletePage(){if(state.pages.length<=1){showToast('A PDF needs at least one page.');return;}if(!confirm('Delete current page?'))return;snapshot();state.pages.splice(state.page,1);state.page=Math.min(state.page,state.pages.length-1);state.selected=[];renderPage();scheduleRecovery();}
+function nav(d){const n=state.page+d;if(n<0||n>=state.pages.length)return;state.page=n;state.selected=[];renderPage();refreshUI();}
+function clearPage(){if(!page().annotations.length)return;if(!confirm('Delete all edits on this page?'))return;snapshot();page().annotations=[];state.selected=[];drawOverlay();refreshUI();scheduleRecovery();}
+function deleteSelected(){if(!state.selected.length)return;snapshot();for(const i of [...state.selected].sort((a,b)=>b-a))page().annotations.splice(i,1);state.selected=[];drawOverlay();refreshUI();scheduleRecovery();}
+function copySelected(){state.clipboard=state.selected.map(i=>deepClone(page().annotations[i]));}
+function pasteSelected(){if(!state.clipboard.length)return;snapshot();const start=page().annotations.length;for(const a of deepClone(state.clipboard)){translateAnn(a,12,12);page().annotations.push(a);}state.selected=state.clipboard.map((_,i)=>start+i);drawOverlay();refreshUI();scheduleRecovery();}
+function keyTransform(key){if(!state.selected.length)return;snapshot();const b=groupBox(),cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2;state.selected.forEach(i=>{const a=page().annotations[i];if(key==='r')rotateAnn(a,cx,cy,2.5);if(key==='1')scaleAnn(a,b,1.03,1);if(key==='3')scaleAnn(a,b,.97,1);if(key==='2')scaleAnn(a,b,1,1.03);if(key==='4')scaleAnn(a,b,1,.97);});drawOverlay();scheduleRecovery();}
 
-  try {
-    state.bytes = new Uint8Array(draft.bytes);
-    state.pdf = await pdfjsLib.getDocument({ data: state.bytes.slice() }).promise;
-    state.filename = draft.filename || 'recovered-edited.pdf';
-    state.pageStates = Array.isArray(draft.pageStates) && draft.pageStates.length === state.pdf.numPages
-      ? draft.pageStates
-      : Array.from({ length: state.pdf.numPages }, () => ({ rotation: 0, deleted: false, annotations: [] }));
-    state.page = clamp(Number(draft.page) || 1, 1, state.pdf.numPages);
-    state.zoom = clamp(Number(draft.zoom) || 1, 0.5, 2.5);
-    state.baseScale = Number(draft.baseScale) || state.baseScale;
+async function exportPdf(){if(!active())return;els.saveBtn.disabled=true;els.saveBtn.textContent='Saving…';try{const {PDFDocument,StandardFonts,rgb,degrees}=PDFLib;const out=await PDFDocument.create();const src=state.sourceBytes?await PDFDocument.load(state.sourceBytes.slice()):null;const font=await out.embedFont(StandardFonts.Helvetica);for(const p of state.pages){let op;if(p.sourceIndex!==null&&src){const [cp]=await out.copyPages(src,[p.sourceIndex]);op=out.addPage(cp);}else op=out.addPage([p.width,p.height]);for(const a of p.annotations){const col=hexColor(a.color||'#000000',rgb);if(a.type==='text'){a.text.split('\n').forEach((line,k)=>op.drawText(line||' ',{x:a.x,y:p.height-a.y-a.size-k*a.size*1.2,size:a.size,font,color:col,rotate:degrees(-(a.rotation||0))}));}else if((a.type==='stroke'||a.type==='highlight')&&a.points.length>1){for(let i=1;i<a.points.length;i++)op.drawLine({start:{x:a.points[i-1].x,y:p.height-a.points[i-1].y},end:{x:a.points[i].x,y:p.height-a.points[i].y},thickness:a.width,color:col,opacity:a.type==='highlight'?.35:1});}else if(a.type==='image'){try{const bytes=dataUrlBytes(a.dataUrl);const im=/png/i.test(a.dataUrl.slice(0,30))?await out.embedPng(bytes):await out.embedJpg(bytes);op.drawImage(im,{x:a.x,y:p.height-a.y-a.h,width:a.w,height:a.h,rotate:degrees(-(a.rotation||0))});}catch{}}}}
+const bytes=await out.save();const blob=new Blob([bytes],{type:'application/pdf'});await saveBlob(blob,state.filename);await recoveryClear();setStatus('PDF exported. Recovery copy cleared.');showToast('PDF saved.');}catch(e){console.error(e);showToast('Save failed.');}finally{els.saveBtn.textContent='Save As';refreshUI();}}
+function hexColor(h,rgb){h=(h||'#000000').replace('#','');const n=parseInt(h,16)||0;return rgb(((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255);}
+function dataUrlBytes(u){const b=atob(u.split(',')[1]),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
+async function saveBlob(blob,name){if(navigator.canShare&&navigator.share&&/iPad|iPhone|iPod/.test(navigator.userAgent)){try{const f=new File([blob],name,{type:'application/pdf'});if(navigator.canShare({files:[f]})){await navigator.share({files:[f],title:name});return;}}catch(e){if(e?.name==='AbortError')return;}}const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.rel='noopener';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
 
-    els.fileName.textContent = sourceName;
-    els.pageCount.textContent = state.pdf.numPages;
-    els.emptyState.classList.add('hidden');
-    els.editor.classList.remove('hidden');
-    els.exportBtn.disabled = false;
+els.importBtn.onclick=els.emptyImportBtn.onclick=()=>els.pdfInput.click();els.pdfInput.onchange=()=>{loadPdf(els.pdfInput.files?.[0]);els.pdfInput.value='';};els.newBtn.onclick=els.emptyNewBtn.onclick=()=>els.newDialog.showModal();els.newForm.addEventListener('submit',(e)=>{e.preventDefault();newPdf(els.pageSizeSelect.value);els.newDialog.close();});els.saveBtn.onclick=exportPdf;els.addPageBtn.onclick=addPage;els.delPageBtn.onclick=deletePage;els.prevBtn.onclick=()=>nav(-1);els.nextBtn.onclick=()=>nav(1);els.imageBtn.onclick=()=>els.imageInput.click();els.undoBtn.onclick=undo;els.redoBtn.onclick=redo;els.deleteSelectedBtn.onclick=deleteSelected;els.clearPageBtn.onclick=clearPage;els.zoomOutBtn.onclick=()=>changeZoom(-.1);els.zoomInBtn.onclick=()=>changeZoom(.1);els.applyZoomBtn.onclick=applyZoom;els.fitBtn.onclick=()=>fitToWindow();els.zoomInput.addEventListener('keydown',e=>{if(e.key==='Enter')applyZoom();});document.querySelectorAll('[data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
 
-    await renderThumbnails();
-    await renderPage();
-    toast('Recovery draft restored.');
-  } catch (error) {
-    console.error('Could not restore recovery draft:', error);
-    await clearRecovery();
-    toast('Recovery draft could not be restored.');
-  }
-}
+window.addEventListener('keydown',(e)=>{if(isTypingTarget(e.target))return;const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;if(mod&&k==='s'){e.preventDefault();exportPdf();return;}if(mod&&k==='z'){e.preventDefault();undo();return;}if(mod&&k==='y'){e.preventDefault();redo();return;}if(mod&&k==='c'){e.preventDefault();copySelected();return;}if(mod&&k==='v'){e.preventDefault();pasteSelected();return;}if(mod&&e.key==='0'){e.preventDefault();fitToWindow();return;}if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();deleteSelected();return;}if(e.key==='PageUp'){e.preventDefault();nav(-1);return;}if(e.key==='PageDown'){e.preventDefault();nav(1);return;}if(['s','p','e','h','t'].includes(k)&&!mod){setTool({s:'select',p:'pen',e:'erase',h:'highlight',t:'text'}[k]);return;}if(['r','1','2','3','4'].includes(k)&&state.selected.length)keyTransform(k);});
 
-async function requestPersistentRecoveryStorage() {
-  try {
-    if (navigator.storage?.persist) await navigator.storage.persist();
-  } catch (error) {
-    // Persistence is optional; normal IndexedDB recovery still works without it.
-  }
-}
+let resizeTimer;function handleResize(){clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(active())fitToWindow();},180);}window.addEventListener('resize',handleResize);window.visualViewport?.addEventListener('resize',handleResize);window.addEventListener('orientationchange',()=>setTimeout(handleResize,250));document.addEventListener('visibilitychange',()=>{if(document.hidden)scheduleRecovery(0);});window.addEventListener('pagehide',()=>{if(active())recoveryPut();});
 
-
-function toast(message) {
-  els.toast.textContent = message;
-  els.toast.classList.remove('hidden');
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => els.toast.classList.add('hidden'), 2200);
-}
-
-function currentPageState() { return state.pageStates[state.page - 1]; }
-function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
-
-function hexToRgb01(hex) {
-  const clean = hex.replace('#', '');
-  const value = parseInt(clean, 16);
-  return {
-    r: ((value >> 16) & 255) / 255,
-    g: ((value >> 8) & 255) / 255,
-    b: (value & 255) / 255
-  };
-}
-
-async function loadPdf(file) {
-  if (!file || file.type !== 'application/pdf') {
-    toast('Please choose a PDF file.');
-    return;
-  }
-
-  try {
-    const buffer = await file.arrayBuffer();
-    state.bytes = new Uint8Array(buffer);
-    state.pdf = await pdfjsLib.getDocument({ data: state.bytes.slice() }).promise;
-    state.filename = file.name.replace(/\.pdf$/i, '') + '-edited.pdf';
-    state.page = 1;
-    state.zoom = 1;
-    state.pageStates = Array.from({ length: state.pdf.numPages }, () => ({ rotation: 0, deleted: false, annotations: [] }));
-
-    els.fileName.textContent = file.name;
-    els.pageCount.textContent = state.pdf.numPages;
-    els.emptyState.classList.add('hidden');
-    els.editor.classList.remove('hidden');
-    els.exportBtn.disabled = false;
-
-    await renderThumbnails();
-    await renderPage();
-    await requestPersistentRecoveryStorage();
-    scheduleRecoveryAutosave(0);
-    toast('PDF loaded locally. Recovery autosave is on.');
-  } catch (error) {
-    console.error(error);
-    toast('Could not open that PDF.');
-  }
-}
-
-async function renderPage() {
-  if (!state.pdf) return;
-  const token = ++state.renderToken;
-  const pageState = currentPageState();
-  if (pageState.deleted) {
-    const next = state.pageStates.findIndex((p) => !p.deleted);
-    if (next < 0) return;
-    state.page = next + 1;
-  }
-
-  const page = await state.pdf.getPage(state.page);
-  if (token !== state.renderToken) return;
-  const rotation = currentPageState().rotation;
-  const scale = state.baseScale * state.zoom;
-  const viewport = page.getViewport({ scale, rotation });
-  const outputScale = window.devicePixelRatio || 1;
-
-  els.pdfCanvas.width = Math.floor(viewport.width * outputScale);
-  els.pdfCanvas.height = Math.floor(viewport.height * outputScale);
-  els.pdfCanvas.style.width = `${viewport.width}px`;
-  els.pdfCanvas.style.height = `${viewport.height}px`;
-  els.overlayCanvas.width = Math.floor(viewport.width * outputScale);
-  els.overlayCanvas.height = Math.floor(viewport.height * outputScale);
-  els.overlayCanvas.style.width = `${viewport.width}px`;
-  els.overlayCanvas.style.height = `${viewport.height}px`;
-  els.pageStage.style.width = `${viewport.width}px`;
-  els.pageStage.style.height = `${viewport.height}px`;
-
-  await page.render({
-    canvasContext: pdfCtx,
-    viewport,
-    transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null
-  }).promise;
-
-  drawOverlay();
-  refreshUI();
-}
-
-function drawOverlay() {
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = els.overlayCanvas.width / dpr;
-  const cssH = els.overlayCanvas.height / dpr;
-  overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  overlayCtx.clearRect(0, 0, cssW, cssH);
-
-  const pageState = currentPageState();
-  if (!pageState) return;
-  const visualScale = state.baseScale * state.zoom;
-
-  for (const ann of pageState.annotations) {
-    if (ann.type === 'text') {
-      overlayCtx.save();
-      overlayCtx.fillStyle = ann.color;
-      overlayCtx.font = `${ann.size * visualScale}px Inter, Arial, sans-serif`;
-      overlayCtx.textBaseline = 'top';
-      const lines = ann.text.split('\n');
-      lines.forEach((line, i) => overlayCtx.fillText(line, ann.x * visualScale, (ann.y + i * ann.size * 1.2) * visualScale));
-      overlayCtx.restore();
-    } else if (ann.type === 'draw') {
-      overlayCtx.save();
-      overlayCtx.strokeStyle = ann.color;
-      overlayCtx.lineWidth = ann.width * visualScale;
-      overlayCtx.lineCap = 'round';
-      overlayCtx.lineJoin = 'round';
-      overlayCtx.beginPath();
-      ann.points.forEach((p, i) => {
-        const x = p.x * visualScale;
-        const y = p.y * visualScale;
-        if (i === 0) overlayCtx.moveTo(x, y); else overlayCtx.lineTo(x, y);
-      });
-      overlayCtx.stroke();
-      overlayCtx.restore();
-    }
-  }
-}
-
-async function renderThumbnails() {
-  els.thumbs.innerHTML = '';
-  for (let i = 1; i <= state.pdf.numPages; i++) {
-    const pageState = state.pageStates[i - 1];
-    const wrapper = document.createElement('button');
-    wrapper.className = `thumb${i === state.page ? ' active' : ''}${pageState.deleted ? ' deleted' : ''}`;
-    wrapper.type = 'button';
-    wrapper.dataset.page = i;
-    wrapper.innerHTML = `<canvas></canvas><div class="thumb-label"><span>Page ${i}</span><span>${pageState.deleted ? 'Deleted' : ''}</span></div>`;
-    wrapper.addEventListener('click', async () => {
-      if (pageState.deleted) return;
-      state.page = i;
-      await renderPage();
-      updateThumbSelection();
-    });
-    els.thumbs.appendChild(wrapper);
-
-    const pdfPage = await state.pdf.getPage(i);
-    const viewport = pdfPage.getViewport({ scale: 0.22, rotation: pageState.rotation });
-    const canvas = wrapper.querySelector('canvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = Math.max(1, Math.floor(viewport.width));
-    canvas.height = Math.max(1, Math.floor(viewport.height));
-    await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-  }
-}
-
-function updateThumbSelection() {
-  [...els.thumbs.children].forEach((thumb) => thumb.classList.toggle('active', Number(thumb.dataset.page) === state.page));
-}
-
-function refreshUI() {
-  const alive = state.pageStates.filter((p) => !p.deleted).length;
-  els.pageStatus.textContent = `Page ${state.page} of ${state.pdf?.numPages || 0} • ${alive} kept`;
-  els.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
-  els.undoBtn.disabled = !currentPageState()?.annotations.length;
-  updateThumbSelection();
-}
-
-function pointOnOverlay(evt) {
-  const rect = els.overlayCanvas.getBoundingClientRect();
-  const xCss = clamp(evt.clientX - rect.left, 0, rect.width);
-  const yCss = clamp(evt.clientY - rect.top, 0, rect.height);
-  const visualScale = state.baseScale * state.zoom;
-  return { x: xCss / visualScale, y: yCss / visualScale };
-}
-
-function setTool(tool) {
-  state.tool = tool;
-  document.querySelectorAll('[data-tool]').forEach((btn) => btn.classList.toggle('active', btn.dataset.tool === tool));
-  els.overlayCanvas.style.cursor = tool === 'text' ? 'text' : tool === 'draw' ? 'crosshair' : 'default';
-}
-
-document.querySelectorAll('[data-tool]').forEach((btn) => btn.addEventListener('click', () => setTool(btn.dataset.tool)));
-
-els.overlayCanvas.addEventListener('pointerdown', (evt) => {
-  if (!state.pdf || currentPageState().deleted) return;
-  if (state.tool === 'text') {
-    state.pendingTextPoint = pointOnOverlay(evt);
-    els.textDialog.classList.remove('hidden');
-    els.textInput.value = '';
-    setTimeout(() => els.textInput.focus(), 0);
-    return;
-  }
-  if (state.tool === 'draw') {
-    state.drawing = true;
-    els.overlayCanvas.setPointerCapture(evt.pointerId);
-    const p = pointOnOverlay(evt);
-    state.currentStroke = {
-      type: 'draw',
-      points: [p],
-      color: els.colorPicker.value,
-      width: 2.2 / state.baseScale
-    };
-    currentPageState().annotations.push(state.currentStroke);
-    drawOverlay();
-  }
-});
-
-els.overlayCanvas.addEventListener('pointermove', (evt) => {
-  if (!state.drawing || state.tool !== 'draw' || !state.currentStroke) return;
-  state.currentStroke.points.push(pointOnOverlay(evt));
-  drawOverlay();
-});
-
-function endStroke() {
-  if (!state.drawing) return;
-  state.drawing = false;
-  if (state.currentStroke && state.currentStroke.points.length < 2) currentPageState().annotations.pop();
-  state.currentStroke = null;
-  refreshUI();
-  scheduleRecoveryAutosave();
-}
-els.overlayCanvas.addEventListener('pointerup', endStroke);
-els.overlayCanvas.addEventListener('pointercancel', endStroke);
-
-els.textForm.addEventListener('submit', (evt) => {
-  evt.preventDefault();
-  const text = els.textInput.value.trim();
-  if (text && state.pendingTextPoint) {
-    currentPageState().annotations.push({
-      type: 'text', text, x: state.pendingTextPoint.x, y: state.pendingTextPoint.y,
-      size: clamp(Number(els.fontSize.value) || 20, 8, 96) / state.baseScale,
-      color: els.colorPicker.value
-    });
-    drawOverlay();
-    refreshUI();
-    scheduleRecoveryAutosave();
-  }
-  state.pendingTextPoint = null;
-  els.textDialog.classList.add('hidden');
-});
-els.cancelText.addEventListener('click', () => { state.pendingTextPoint = null; els.textDialog.classList.add('hidden'); });
-els.textDialog.addEventListener('click', (evt) => { if (evt.target === els.textDialog) els.cancelText.click(); });
-
-els.undoBtn.addEventListener('click', () => {
-  currentPageState()?.annotations.pop();
-  drawOverlay();
-  refreshUI();
-  scheduleRecoveryAutosave();
-});
-
-els.rotateBtn.addEventListener('click', async () => {
-  const ps = currentPageState();
-  ps.rotation = (ps.rotation + 90) % 360;
-  await renderPage();
-  await renderThumbnails();
-  scheduleRecoveryAutosave();
-});
-
-els.deleteBtn.addEventListener('click', async () => {
-  const kept = state.pageStates.filter((p) => !p.deleted).length;
-  if (kept <= 1) { toast('A PDF needs at least one page.'); return; }
-  currentPageState().deleted = true;
-  const next = state.pageStates.findIndex((p, idx) => idx >= state.page && !p.deleted);
-  const fallback = state.pageStates.map((p, idx) => ({ p, idx })).reverse().find(({ p, idx }) => idx < state.page - 1 && !p.deleted);
-  state.page = next >= 0 ? next + 1 : (fallback ? fallback.idx + 1 : 1);
-  await renderThumbnails();
-  await renderPage();
-  scheduleRecoveryAutosave();
-});
-
-els.zoomIn.addEventListener('click', async () => { state.zoom = clamp(state.zoom + 0.15, 0.5, 2.5); await renderPage(); scheduleRecoveryAutosave(); });
-els.zoomOut.addEventListener('click', async () => { state.zoom = clamp(state.zoom - 0.15, 0.5, 2.5); await renderPage(); scheduleRecoveryAutosave(); });
-
-async function exportPdf() {
-  if (!state.bytes) return;
-  els.exportBtn.disabled = true;
-  els.exportBtn.textContent = 'Exporting…';
-  try {
-    const { PDFDocument, StandardFonts, rgb, degrees } = PDFLib;
-    const source = await PDFDocument.load(state.bytes.slice());
-    const out = await PDFDocument.create();
-    const font = await out.embedFont(StandardFonts.Helvetica);
-
-    for (let i = 0; i < source.getPageCount(); i++) {
-      const ps = state.pageStates[i];
-      if (ps.deleted) continue;
-
-      const [copied] = await out.copyPages(source, [i]);
-      out.addPage(copied);
-      const outPage = out.getPage(out.getPageCount() - 1);
-      const pdfJsPage = await state.pdf.getPage(i + 1);
-      const viewport = pdfJsPage.getViewport({ scale: 1, rotation: ps.rotation });
-
-      for (const ann of ps.annotations) {
-        const c = hexToRgb01(ann.color);
-        const color = rgb(c.r, c.g, c.b);
-        if (ann.type === 'text') {
-          const lines = ann.text.split('\n');
-          lines.forEach((line, lineIndex) => {
-            const visualX = ann.x;
-            const visualTopY = ann.y + lineIndex * ann.size * 1.2;
-            // PDF.js maps display points back into the original page coordinate system.
-            const [px, pyTop] = viewport.convertToPdfPoint(visualX, visualTopY);
-            const [px2, pyBottom] = viewport.convertToPdfPoint(visualX, visualTopY + ann.size);
-            const y = Math.min(pyTop, pyBottom);
-            outPage.drawText(line || ' ', {
-              x: px,
-              y,
-              size: ann.size,
-              font,
-              color
-            });
-          });
-        } else if (ann.type === 'draw' && ann.points.length > 1) {
-          for (let p = 1; p < ann.points.length; p++) {
-            const a = viewport.convertToPdfPoint(ann.points[p - 1].x, ann.points[p - 1].y);
-            const b = viewport.convertToPdfPoint(ann.points[p].x, ann.points[p].y);
-            outPage.drawLine({
-              start: { x: a[0], y: a[1] },
-              end: { x: b[0], y: b[1] },
-              thickness: ann.width,
-              color,
-              opacity: 1
-            });
-          }
-        }
-      }
-
-      outPage.setRotation(degrees(ps.rotation));
-    }
-
-    const result = await out.save();
-    const blob = new Blob([result], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = state.filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    await clearRecovery();
-    toast('Edited PDF exported. Recovery copy cleared.');
-  } catch (error) {
-    console.error(error);
-    toast('Export failed. Try another PDF.');
-  } finally {
-    els.exportBtn.disabled = false;
-    els.exportBtn.textContent = 'Export PDF';
-  }
-}
-
-els.exportBtn.addEventListener('click', exportPdf);
-const openPicker = () => els.fileInput.click();
-els.openBtn.addEventListener('click', openPicker);
-els.chooseBtn.addEventListener('click', openPicker);
-els.fileInput.addEventListener('change', (evt) => loadPdf(evt.target.files[0]));
-
-['dragenter', 'dragover'].forEach((name) => els.dropZone.addEventListener(name, (evt) => {
-  evt.preventDefault(); els.dropZone.classList.add('dragging');
-}));
-['dragleave', 'drop'].forEach((name) => els.dropZone.addEventListener(name, (evt) => {
-  evt.preventDefault(); els.dropZone.classList.remove('dragging');
-}));
-els.dropZone.addEventListener('drop', (evt) => loadPdf(evt.dataTransfer.files[0]));
-
-window.addEventListener('keydown', (evt) => {
-  if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'z' && !els.editor.classList.contains('hidden')) {
-    evt.preventDefault(); els.undoBtn.click();
-  }
-  if (evt.key === 'Escape' && !els.textDialog.classList.contains('hidden')) els.cancelText.click();
-});
-
-
-// Check for a recoverable editing session when the app opens.
-window.addEventListener('DOMContentLoaded', () => {
-  restoreRecoveryIfAvailable();
-});
+(async()=>{try{await navigator.storage?.persist?.();}catch{}await restoreRecovery();refreshUI();})();
+})();

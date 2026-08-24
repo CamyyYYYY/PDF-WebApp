@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="theme-color" content="#eeeeee">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="description" content="Simple PDF Editor - a browser-only JavaScript PDF editor for GitHub Pages.">
   <title>Simple PDF Editor</title>
   <link rel="stylesheet" href="styles.css">
@@ -13,108 +14,35 @@
   <div class="app" id="app">
     <header class="toolbar-wrap">
       <div class="toolbar-row">
-        <button id="newBtn">New PDF</button>
-        <button id="importBtn">Import PDF</button>
-        <button id="saveBtn" disabled>Save As</button>
-        <button id="addPageBtn" disabled>+ Page</button>
-        <button id="delPageBtn" disabled>Del Page</button>
-        <span class="sep"></span>
-        <button id="prevBtn" disabled>&lt; Prev</button>
-        <button id="nextBtn" disabled>Next &gt;</button>
-        <span id="pageLabel" class="readout">Page 0 / 0</span>
+        <button id="newBtn">New PDF</button><button id="importBtn">Import PDF</button><button id="saveBtn" disabled>Save As</button>
+        <button id="addPageBtn" disabled>+ Page</button><button id="delPageBtn" disabled>Del Page</button><span class="sep"></span>
+        <button id="prevBtn" disabled>&lt; Prev</button><button id="nextBtn" disabled>Next &gt;</button><span id="pageLabel" class="readout">Page 0 / 0</span>
       </div>
-
       <div class="toolbar-row">
-        <button class="tool active" data-tool="select">Select</button>
-        <button class="tool" data-tool="pan">Pan</button>
-        <button class="tool" data-tool="pen">Pen</button>
-        <button class="tool" data-tool="erase">Erase</button>
-        <button class="tool" data-tool="highlight">Highlight</button>
-        <button class="tool" data-tool="text">Text</button>
-        <button id="imageBtn" disabled>Import Image</button>
-        <label class="color-control">Color <input id="colorPicker" type="color" value="#ff0000"></label>
-        <button id="undoBtn" disabled>Undo</button>
-        <button id="redoBtn" disabled>Redo</button>
-        <button id="deleteSelectedBtn" disabled>Delete Selected</button>
-        <button id="clearPageBtn" disabled>Clear Page</button>
+        <button class="tool active" data-tool="select">Select</button><button class="tool" data-tool="pan">Pan</button><button class="tool" data-tool="pen">Pen</button>
+        <button class="tool" data-tool="erase">Erase</button><button class="tool" data-tool="highlight">Highlight</button><button class="tool" data-tool="text">Text</button>
+        <button id="imageBtn" disabled>Import Image</button><label class="color-control">Color <input id="colorPicker" type="color" value="#ff0000"></label>
+        <button id="undoBtn" disabled>Undo</button><button id="redoBtn" disabled>Redo</button><button id="deleteSelectedBtn" disabled>Delete Selected</button><button id="clearPageBtn" disabled>Clear Page</button>
       </div>
-
       <div class="toolbar-row settings-row">
-        <label>Pen <input id="penWidth" type="number" min="1" max="80" value="3"></label>
-        <label>Highlight <input id="highlightWidth" type="number" min="1" max="80" value="16"></label>
-        <label>Eraser <input id="eraserWidth" type="number" min="1" max="200" value="20"></label>
-        <label>Text <input id="textSize" type="number" min="6" max="144" value="18"></label>
-        <span class="sep"></span>
-        <button id="zoomOutBtn" disabled>Zoom -</button>
-        <button id="zoomInBtn" disabled>Zoom +</button>
-        <label>Zoom % <input id="zoomInput" type="number" min="10" max="400" value="100"></label>
-        <button id="applyZoomBtn" disabled>Apply</button>
-        <button id="fitBtn" disabled>Fit</button>
-        <span id="zoomLabel" class="readout">Zoom 100%</span>
-        <span id="toolLabel" class="readout">Tool: Select</span>
+        <label>Pen <input id="penWidth" type="number" min="1" max="80" value="3" inputmode="decimal"></label>
+        <label>Highlight <input id="highlightWidth" type="number" min="1" max="80" value="16" inputmode="decimal"></label>
+        <label>Eraser <input id="eraserWidth" type="number" min="1" max="200" value="20" inputmode="decimal"></label>
+        <label>Text <input id="textSize" type="number" min="6" max="144" value="18" inputmode="decimal"></label><span class="sep"></span>
+        <button id="zoomOutBtn" disabled>Zoom -</button><button id="zoomInBtn" disabled>Zoom +</button><label>Zoom % <input id="zoomInput" type="number" min="10" max="400" value="100" inputmode="decimal"></label>
+        <button id="applyZoomBtn" disabled>Apply</button><button id="fitBtn" disabled>Fit</button><span id="zoomLabel" class="readout">Zoom 100%</span><span id="toolLabel" class="readout">Tool: Select</span>
       </div>
     </header>
-
     <main id="workspace" class="workspace">
-      <div id="emptyState" class="empty-state">
-        <h1>Simple PDF Editor</h1>
-        <p>Open an existing PDF or create a new one.</p>
-        <div class="empty-actions">
-          <button id="emptyNewBtn">New PDF</button>
-          <button id="emptyImportBtn">Import PDF</button>
-        </div>
-        <small>Runs entirely in your browser with HTML, CSS and JavaScript.</small>
-      </div>
-
-      <div id="scrollArea" class="scroll-area hidden">
-        <div id="pageStage" class="page-stage">
-          <canvas id="pdfCanvas"></canvas>
-          <canvas id="overlayCanvas"></canvas>
-        </div>
-      </div>
+      <div id="emptyState" class="empty-state"><h1>Simple PDF Editor</h1><p>Open an existing PDF or create a new one.</p><div class="empty-actions"><button id="emptyNewBtn">New PDF</button><button id="emptyImportBtn">Import PDF</button></div><small>Runs entirely in your browser with HTML, CSS and JavaScript.</small></div>
+      <div id="scrollArea" class="scroll-area hidden"><div id="pageStage" class="page-stage"><canvas id="pdfCanvas"></canvas><canvas id="overlayCanvas"></canvas></div></div>
     </main>
-
-    <footer class="statusbar">
-      <span id="status">Open or create a PDF to begin.</span>
-      <span id="selectionStatus"></span>
-    </footer>
+    <footer class="statusbar"><span id="status">Open or create a PDF to begin.</span><span id="selectionStatus"></span></footer>
   </div>
-
-  <input id="pdfInput" type="file" accept="application/pdf,.pdf" hidden>
-  <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden>
-
-  <dialog id="newDialog">
-    <form method="dialog" id="newForm">
-      <h2>Create PDF</h2>
-      <label>Choose PDF type
-        <select id="pageSizeSelect">
-          <option>Letter - Portrait</option>
-          <option>Letter - Landscape</option>
-          <option>A4 - Portrait</option>
-          <option>A4 - Landscape</option>
-          <option>Square</option>
-        </select>
-      </label>
-      <div class="dialog-actions">
-        <button value="cancel">Cancel</button>
-        <button id="createPdfBtn" value="default">Create</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="textDialog">
-    <form method="dialog" id="textForm">
-      <h2 id="textDialogTitle">Add Text</h2>
-      <textarea id="textInput" rows="5" placeholder="Type text here..."></textarea>
-      <div class="dialog-actions">
-        <button id="cancelTextBtn" value="cancel">Cancel</button>
-        <button id="confirmTextBtn" value="default">OK</button>
-      </div>
-    </form>
-  </dialog>
-
+  <input id="pdfInput" type="file" accept="application/pdf,.pdf" hidden><input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden>
+  <dialog id="newDialog"><form method="dialog" id="newForm"><h2>Create PDF</h2><label>Choose PDF type<select id="pageSizeSelect"><option>Letter - Portrait</option><option>Letter - Landscape</option><option>A4 - Portrait</option><option>A4 - Landscape</option><option>Square</option></select></label><div class="dialog-actions"><button value="cancel">Cancel</button><button id="createPdfBtn" value="default">Create</button></div></form></dialog>
+  <dialog id="textDialog"><form method="dialog" id="textForm"><h2 id="textDialogTitle">Add Text</h2><textarea id="textInput" rows="5" placeholder="Type text here..."></textarea><div class="dialog-actions"><button id="cancelTextBtn" type="button">Cancel</button><button id="confirmTextBtn" type="submit">OK</button></div></form></dialog>
   <div id="toast" class="toast hidden"></div>
-
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="app.js"></script>
