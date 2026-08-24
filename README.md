@@ -73,4 +73,10 @@ The recovery data is stored on the user's device/browser. It is not uploaded to 
 4. In GitHub, open **Settings → Pages**.
 5. Choose **Deploy from a branch**, `main`, `/ (root)`.
 
-The app loads PDF.js and pdf-lib from cdnjs, so the hosted page needs internet access when it first loads those libraries.
+The app loads PDF.js and pdf-lib on demand in the browser. It tries cdnjs first and jsDelivr as a fallback, so importing or exporting PDFs needs internet access to load those libraries unless they are already cached. The editor interface itself loads before those libraries.
+
+## PDF loading troubleshooting
+- The app uses PDF.js for PDF display and pdf-lib for PDF export.
+- The GitHub Pages site needs internet access to load those libraries from cdnjs when the app starts.
+- If Import PDF does nothing, refresh the page and make sure a content/privacy blocker is not blocking `cdnjs.cloudflare.com`.
+- Password-protected PDFs may not open in this editor.
